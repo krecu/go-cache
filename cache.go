@@ -36,9 +36,20 @@ func Marshal(value interface{}) (bufCompress []byte, err error) {
 	return
 }
 
-func Unmarshal(buf []byte) (value []byte, err error) {
+func Unmarshal(value []byte, item interface{}) (err error) {
+	var (
+		bufJson []byte
+	)
 
-	value, err = compress.Decode(nil, buf)
+	if bufJson, err = compress.Decode(nil, value); err != nil {
+		err = fmt.Errorf("cache: %s", err)
+		return
+	}
+
+	if err = json.Unmarshal(bufJson, &item); err != nil {
+		err = fmt.Errorf("cache: %s", err)
+		return
+	}
 
 	return
 }
