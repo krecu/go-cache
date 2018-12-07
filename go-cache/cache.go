@@ -9,6 +9,7 @@ import (
 
 	vendor "github.com/patrickmn/go-cache"
 	"sync"
+	"reflect"
 )
 
 type Cache struct {
@@ -17,6 +18,12 @@ type Cache struct {
 
 	marshal func(item interface{}) (value []byte, err error)
 	unmarshal func(value []byte, item interface{}) (err error)
+}
+
+// support marshal/unmarshal easyjson
+type EasyJson interface {
+	MarshalJSON() ([]byte, error)
+	UnmarshalJSON(data []byte) error
 }
 
 type Option struct {
@@ -54,15 +61,39 @@ func New(option Option) (proto *Cache, err error) {
 
 		// sumple marshal
 		proto.marshal = func(item interface{}) (value []byte, err error) {
-			value, err = json.Marshal(item)
+
+			st := reflect.TypeOf(item)
+			_, ok := st.MethodByName("MarshalJSON")
+			if ok {
+				if _, ok := item.(EasyJson); ok {
+					value, err = item.(EasyJson).MarshalJSON()
+					return
+				}
+			} else {
+				value, err = json.Marshal(item)
+			}
+
 			return
 		}
 
 		// simple unmarhal
 		proto.unmarshal = func(value []byte, item interface{}) (err error) {
+
+
+			st := reflect.TypeOf(item)
+
+			_, ok := st.MethodByName("UnmarshalJSON")
+			if ok {
+				if _, ok := item.(EasyJson); ok {
+					err = item.(EasyJson).UnmarshalJSON(value)
+					return
+				}
+			}
+
 			if err = json.Unmarshal(value, &item); err != nil {
 				err = fmt.Errorf("cache: %s", err)
 			}
+
 			return
 		}
 	}
@@ -107,7 +138,7 @@ func (c *Cache) Get(key string, value interface{}) (err error) {
 	defer c.mu.Unlock()
 
 	if buf, ok := c.db.Get(key); ok {
-		if err = c.unmarshal(buf.([]byte), &value); err != nil {
+		if err = c.unmarshal(buf.([]byte), value); err != nil {
 			err = fmt.Errorf("cache: %s", err)
 		}
 	} else {
