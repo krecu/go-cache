@@ -2,14 +2,15 @@ package go_cache
 
 import (
 	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"github.com/krecu/go-cache"
 	"time"
 
 	vendor "github.com/patrickmn/go-cache"
-	"sync"
 	"reflect"
+	"sync"
 )
 
 type Cache struct {
@@ -84,6 +85,7 @@ func New(option Option) (proto *Cache, err error) {
 
 			_, ok := st.MethodByName("UnmarshalJSON")
 			if ok {
+
 				if _, ok := item.(EasyJson); ok {
 					err = item.(EasyJson).UnmarshalJSON(value)
 					return
@@ -117,6 +119,17 @@ func (c *Cache) Set(key string, value interface{}) (err error) {
 }
 
 // set expired cache
+func (c *Cache) SetO(key string, value interface{}) (err error) {
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.db.Set(key, value, vendor.NoExpiration)
+
+	return
+}
+
+// set expired cache
 func (c *Cache) SetExpired(key string, value interface{}) (err error) {
 
 	c.mu.Lock()
@@ -131,6 +144,17 @@ func (c *Cache) SetExpired(key string, value interface{}) (err error) {
 	return
 }
 
+// set expired cache
+func (c *Cache) SetOExpired(key string, value interface{}) (err error) {
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.db.SetDefault(key, value)
+	
+	return
+}
+
 // get cache
 func (c *Cache) Get(key string, value interface{}) (err error) {
 
@@ -141,6 +165,25 @@ func (c *Cache) Get(key string, value interface{}) (err error) {
 		if err = c.unmarshal(buf.([]byte), value); err != nil {
 			err = fmt.Errorf("cache: %s", err)
 		}
+	} else {
+		err = cache.NOT_FOUND
+	}
+
+	return
+}
+
+// get cache
+func (c *Cache) GetO(key string, value interface{}) (err error) {
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if o, ok := c.db.Get(key); ok {
+		buff := new(bytes.Buffer)
+		enc := gob.NewEncoder(buff)
+		dec := gob.NewDecoder(buff)
+		enc.Encode(o)
+		dec.Decode(value)
 	} else {
 		err = cache.NOT_FOUND
 	}

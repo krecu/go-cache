@@ -1,9 +1,9 @@
 package go_cache
 
 import (
+	"github.com/krecu/go-cache"
 	"testing"
 	"time"
-	"github.com/krecu/go-cache"
 )
 
 type TestItem struct {
@@ -11,6 +11,38 @@ type TestItem struct {
 	Body string
 }
 
+func TestCache_SetGetO(t *testing.T) {
+	var (
+		key   = "test"
+		err  error
+		item *TestItem
+	)
+
+	proto, _ := New(Option{
+		Evicted: 10,
+		Compress: true,
+		Expire: 10,
+		Flush: 10,
+	})
+
+	err = proto.SetO(key, TestItem{
+		Id: "1",
+		Body: "1",
+	})
+	if err != nil {
+		t.Errorf("Err: %s", err)
+	}
+
+	item = &TestItem{}
+	err = proto.GetO(key, &item)
+	if err != nil {
+		t.Error(err)
+	} else {
+		if item.Id != "1" || item.Body != "1" {
+			t.Error("no equal")
+		}
+	}
+}
 
 func TestCache_SetGet(t *testing.T) {
 
