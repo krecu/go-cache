@@ -2,23 +2,27 @@ package go_cache
 
 import (
 	"bytes"
-	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"github.com/krecu/go-cache"
 	"time"
 
-	vendor "github.com/patrickmn/go-cache"
+	"github.com/cespare/xxhash"
+	"github.com/krecu/go-cache"
+
 	"reflect"
 	"sync"
+
+	vendor "github.com/patrickmn/go-cache"
 )
 
 type Cache struct {
 	db *vendor.Cache
 	mu sync.Mutex
 
-	marshal func(item interface{}) (value []byte, err error)
+	marshal   func(item interface{}) (value []byte, err error)
 	unmarshal func(value []byte, item interface{}) (err error)
+
+	pointer bool
 }
 
 // support marshal/unmarshal easyjson
@@ -28,25 +32,26 @@ type EasyJson interface {
 }
 
 type Option struct {
-	Expire int64 // expire in second
-	Evicted int64 // evicted record in second
-	Flush int64 // clear all records in second
-	Compress bool // enabled compression
+	Expire   int64 // expire in second
+	Evicted  int64 // evicted record in second
+	Flush    int64 // clear all records in second
+	Compress bool  // enabled compression
+	Pointer  bool  // enabled compression
 }
 
 // new proto
 func New(option Option) (proto *Cache, err error) {
 
-
 	// init store
 	proto = &Cache{
-		db: vendor.New(time.Duration(option.Expire)*time.Second, time.Duration(option.Evicted)*time.Second),
+		db:      vendor.New(time.Duration(option.Expire)*time.Second, time.Duration(option.Evicted)*time.Second),
+		pointer: option.Pointer,
 	}
 
 	// if enabled flush
 	if option.Flush > 0 {
 		tick := time.NewTicker(time.Duration(option.Flush) * time.Second)
-		go func(){
+		go func() {
 			for t := range tick.C {
 				_ = t
 				proto.Clear()
@@ -66,7 +71,9 @@ func New(option Option) (proto *Cache, err error) {
 			st := reflect.TypeOf(item)
 			_, ok := st.MethodByName("MarshalJSON")
 			if ok {
+				//fmt.Println("------------------------------------------------------------------------------------------")
 				if _, ok := item.(EasyJson); ok {
+					//fmt.Println("------------------------------------------------------------------------------------------")
 					value, err = item.(EasyJson).MarshalJSON()
 					return
 				}
@@ -79,7 +86,6 @@ func New(option Option) (proto *Cache, err error) {
 
 		// simple unmarhal
 		proto.unmarshal = func(value []byte, item interface{}) (err error) {
-
 
 			st := reflect.TypeOf(item)
 
@@ -109,22 +115,55 @@ func (c *Cache) Set(key string, value interface{}) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if buf, err := c.marshal(value); err == nil {
-		c.db.Set(key, buf, vendor.NoExpiration)
+	if c.pointer {
+		c.db.Set(Key(key), value, vendor.NoExpiration)
 	} else {
-		err = fmt.Errorf("cache: %s", err)
+		if buf, err := c.marshal(value); err == nil {
+			c.db.Set(Key(key), buf, vendor.NoExpiration)
+		} else {
+			err = fmt.Errorf("cache: %s", err)
+		}
 	}
-
 	return
 }
 
-// set expired cache
-func (c *Cache) SetO(key string, value interface{}) (err error) {
+// get cache
+func (c *Cache) Get(key string, value interface{}) (err error) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.db.Set(key, value, vendor.NoExpiration)
+	if c.pointer {
+		if p, ok := c.db.Get(Key(key)); ok {
+
+			rv := reflect.ValueOf(value)
+			if rv.Kind() != reflect.Ptr || rv.IsNil() {
+				return fmt.Errorf("bad value")
+			}
+
+			rp := reflect.ValueOf(p)
+			if rp.Kind() == reflect.Ptr {
+				rp = reflect.ValueOf(rp.Elem().Interface())
+			}
+
+			if rv.Elem().Type().String() != rp.Type().String() {
+				return fmt.Errorf("non equal type objects")
+			}
+			v := reflect.Indirect(rv)
+			v.Set(rp)
+
+		} else {
+			err = cache.NOT_FOUND
+		}
+	} else {
+		if buf, ok := c.db.Get(Key(key)); ok {
+			if err = c.unmarshal(buf.([]byte), value); err != nil {
+				err = fmt.Errorf("cache: %s", err)
+			}
+		} else {
+			err = cache.NOT_FOUND
+		}
+	}
 
 	return
 }
@@ -135,57 +174,14 @@ func (c *Cache) SetExpired(key string, value interface{}) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if buf, err := c.marshal(value); err == nil {
-		c.db.SetDefault(key, buf)
+	if c.pointer {
+		c.db.Set(Key(key), value, vendor.NoExpiration)
 	} else {
-		err = fmt.Errorf("cache: %s", err)
-	}
-
-	return
-}
-
-// set expired cache
-func (c *Cache) SetOExpired(key string, value interface{}) (err error) {
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.db.SetDefault(key, value)
-	
-	return
-}
-
-// get cache
-func (c *Cache) Get(key string, value interface{}) (err error) {
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if buf, ok := c.db.Get(key); ok {
-		if err = c.unmarshal(buf.([]byte), value); err != nil {
+		if buf, err := c.marshal(value); err == nil {
+			c.db.SetDefault(Key(key), buf)
+		} else {
 			err = fmt.Errorf("cache: %s", err)
 		}
-	} else {
-		err = cache.NOT_FOUND
-	}
-
-	return
-}
-
-// get cache
-func (c *Cache) GetO(key string, value interface{}) (err error) {
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if o, ok := c.db.Get(key); ok {
-		buff := new(bytes.Buffer)
-		enc := gob.NewEncoder(buff)
-		dec := gob.NewDecoder(buff)
-		enc.Encode(o)
-		dec.Decode(value)
-	} else {
-		err = cache.NOT_FOUND
 	}
 
 	return
@@ -209,7 +205,7 @@ func (c *Cache) List(prefix string) (items []interface{}, err error) {
 		err = cache.NOT_FOUND
 	} else {
 		for k, val := range buf {
-			key = []byte(k)
+			key = []byte(Key(k))
 			if !bytes.HasPrefix(key, prefixBuf) {
 				continue
 			}
@@ -228,7 +224,7 @@ func (c *Cache) Del(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.db.Delete(key)
+	c.db.Delete(Key(key))
 }
 
 // close cache
@@ -247,4 +243,8 @@ func (c *Cache) Clear() {
 	defer c.mu.Unlock()
 
 	c.db.Flush()
+}
+
+func Key(s string) string {
+	return fmt.Sprintf("%d", xxhash.Sum64String(s))
 }
