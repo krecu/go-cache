@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cespare/xxhash"
 	"github.com/krecu/go-cache"
 
 	"reflect"
@@ -116,10 +115,10 @@ func (c *Cache) Set(key string, value interface{}) (err error) {
 	defer c.mu.Unlock()
 
 	if c.pointer {
-		c.db.Set(Key(key), value, vendor.NoExpiration)
+		c.db.Set(key, value, vendor.NoExpiration)
 	} else {
 		if buf, err := c.marshal(value); err == nil {
-			c.db.Set(Key(key), buf, vendor.NoExpiration)
+			c.db.Set(key, buf, vendor.NoExpiration)
 		} else {
 			err = fmt.Errorf("cache: %s", err)
 		}
@@ -134,7 +133,7 @@ func (c *Cache) Get(key string, value interface{}) (err error) {
 	defer c.mu.Unlock()
 
 	if c.pointer {
-		if p, ok := c.db.Get(Key(key)); ok {
+		if p, ok := c.db.Get(key); ok {
 
 			rv := reflect.ValueOf(value)
 			if rv.Kind() != reflect.Ptr || rv.IsNil() {
@@ -156,7 +155,7 @@ func (c *Cache) Get(key string, value interface{}) (err error) {
 			err = cache.NOT_FOUND
 		}
 	} else {
-		if buf, ok := c.db.Get(Key(key)); ok {
+		if buf, ok := c.db.Get(key); ok {
 			if err = c.unmarshal(buf.([]byte), value); err != nil {
 				err = fmt.Errorf("cache: %s", err)
 			}
@@ -175,10 +174,10 @@ func (c *Cache) SetExpired(key string, value interface{}) (err error) {
 	defer c.mu.Unlock()
 
 	if c.pointer {
-		c.db.Set(Key(key), value, vendor.NoExpiration)
+		c.db.Set(key, value, vendor.NoExpiration)
 	} else {
 		if buf, err := c.marshal(value); err == nil {
-			c.db.SetDefault(Key(key), buf)
+			c.db.SetDefault(key, buf)
 		} else {
 			err = fmt.Errorf("cache: %s", err)
 		}
@@ -205,7 +204,7 @@ func (c *Cache) List(prefix string) (items []interface{}, err error) {
 		err = cache.NOT_FOUND
 	} else {
 		for k, val := range buf {
-			key = []byte(Key(k))
+			key = []byte(k)
 			if !bytes.HasPrefix(key, prefixBuf) {
 				continue
 			}
@@ -224,7 +223,7 @@ func (c *Cache) Del(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.db.Delete(Key(key))
+	c.db.Delete(key)
 }
 
 // close cache
@@ -243,8 +242,4 @@ func (c *Cache) Clear() {
 	defer c.mu.Unlock()
 
 	c.db.Flush()
-}
-
-func Key(s string) string {
-	return fmt.Sprintf("%d", xxhash.Sum64String(s))
 }
